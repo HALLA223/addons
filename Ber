@@ -1,0 +1,109 @@
+const path = require("path");
+const TerserPlugin = require("terser-webpack-plugin");
+const interceptor = require("express-interceptor");
+const webpack = require("webpack");
+
+const SCRIPT_TAG = '<script async type="text/javascript" src="/readthedocs-addons.js"></script>';
+const HEAD_TAG = "</head>";
+
+var injectReadTheDocsAddons = interceptor(function (req, res) {
+  return {
+    isInterceptable: function () {
+      return /text\/html/.test(res.get("Content-Type"));
+    },
+    intercept: function (body, send) {
+      try {
+        const updatedBody = body.replace(HEAD_TAG, `${SCRIPT_TAG}${HEAD_TAG}`);
+        send(updatedBody);
+      } catch (error) {
+        console.error("Error during HTML injection:", error);
+        send(body); // Send the original body if an error occurs
+      }
+    },
+  };
+});
+
+module.exports = (env, argv) => {
+  const is_production = argv.mode === "production";
+
+  return {
+    entry: {
+      "readthedocs-addons": ["./src/init.js"],
+    },
+    output: {
+      filename: "[name].js?[fullhash]",
+      chunkFilename: "[name].js?[chunkhash]",
+      path: path.join(__dirname, "dist"),
+    },
+    optimization: {
+      minimize: is_production,
+      minimizer: [
+        new TerserPlugin({
+          extractComments: false,
+          terserOptions: {
+            sourceMap: true,
+          },
+        }),
+      ],
+    },
+    module: {
+      rules: [
+        {
+          test: /\.css$/,
+          loader: "css-loader",
+          options: {
+            exportType: "css-style-sheet",
+          },
+        },
+        {
+          test: /\.js$/,
+          exclude: /(node_modules)/,
+          use: {
+            loader: "babel-loader",
+            options: {
+              presets: ["@babel/preset-env"],
+            },
+          },
+        },
+        {
+          test: /\.svg/,
+          type: "asset/inline",
+        },
+      ],
+    },
+    plugins: [
+      new webpack.DefinePlugin({
+        WEBPACK_IS_PRODUCTION: JSON.stringify(is_production),
+        WEBPACK_IS_TESTING: JSON.stringify(false),
+      }),
+    ],
+
+    devtool: "source-map",
+    watchOptions: {
+      aggregateTimeout: 1000,
+      ignored: ["/node_modules/", "**/node_modules/"],
+    },
+    devServer: {
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, PATCH, OPTIONS",
+        "Access-Control-Allow-Headers": "*",
+      },
+      open: false,
+      port: 8000,
+      hot: false,
+      liveReload: true,
+      allowedHosts: "all",
+      setupMiddlewares: (middlewares, devServer) => {
+        middlewares.unshift({
+          name: "readthedocs-addons",
+          middleware: injectReadTheDocsAddons,
+        });
+        return middlewares;
+      },
+      client: {
+        logging: "verbose",
+      },
+    },
+  };
+};
